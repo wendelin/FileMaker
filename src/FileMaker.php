@@ -10,6 +10,7 @@
 
 namespace airmoi\FileMaker;
 
+use airmoi\FileMaker\Connector\ConnectorInterface;
 use airmoi\FileMaker\Parser\FMResultSet;
 use airmoi\FileMaker\Object\Layout;
 
@@ -61,7 +62,13 @@ class FileMaker
         'useCookieSession' => false,
         'emptyAsNull' => false, //Returns null value instead of empty strings on empty field value
         'errorHandling' => 'exception', //Default to use old school FileMaker Errors trapping
+        'connectorClass' => 'CWP',
     ];
+
+    /**
+     * @var ConnectorInterface
+     */
+    private $connector;
 
     /**
      * @var \Log PEAR Log object
@@ -72,11 +79,6 @@ class FileMaker
      * @var Layout[] a pseudo cache for layouts to prevent unnecessary call's to Custom Web Publishing engine
      */
     private static $layouts = [];
-
-    /**
-     * @var string Store the last URL call to Custom Web Publishing engine
-     */
-    public $lastRequestedUrl;
 
     /**
      * Find constants.
@@ -640,6 +642,18 @@ class FileMaker
     }
 
     /**
+     * @return ConnectorInterface
+     */
+    public function getConnector()
+    {
+        $connectorClass = __NAMESPACE__ . '\\Connector' . '\\' . $this->getProperty('connectorClass');
+        if (!$this->connector instanceof $connectorClass) {
+            $this->connector = new $connectorClass($this);
+        }
+        return $this->connector;
+    }
+
+    /**
      * Returns the data for the specified container field.
      * Pass in a URL string that represents the file path for the container
      * field contents. For example, get the image data from a container field
@@ -660,73 +674,7 @@ class FileMaker
      */
     public function getContainerData($url)
     {
-        if (!function_exists('curl_init')) {
-            $error = new FileMakerException($this, 'cURL is required to use the FileMaker API.');
-            if ($this->getProperty('errorHandling') === 'default') {
-                return $error;
-            }
-            throw $error;
-        }
-        if (strncasecmp($url, '/fmi/xml/cnt', 11) !== 0) {
-            $error = new FileMakerException($this, 'getContainerData() does not support remote containers');
-            if ($this->getProperty('errorHandling') === 'default') {
-                return $error;
-            }
-            throw $error;
-        } else {
-            $hostspec = $this->getProperty('hostspec');
-            if (substr($hostspec, -1, 1) === '/') {
-                $hostspec = substr($hostspec, 0, -1);
-            }
-            $hostspec .= $url;
-            $hostspec = htmlspecialchars_decode($hostspec);
-            $hostspec = str_replace(" ", "%20", $hostspec);
-        }
-        $this->log('Request for ' . $hostspec, self::LOG_INFO);
-        $curl = curl_init($hostspec);
-
-        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($curl, CURLOPT_FAILONERROR, true);
-        $isHeadersSent = false;
-        if (!headers_sent()) {
-            $isHeadersSent = true;
-            curl_setopt($curl, CURLOPT_HEADER, true);
-        }
-        $this->setCurlWPCSessionCookie($curl);
-
-        if ($this->getProperty('username')) {
-            $authString = base64_encode($this->getProperty('username') . ':' . $this->getProperty('password'));
-            $headers    = [
-                'Authorization: Basic ' . $authString,
-                'X-FMI-PE-ExtendedPrivilege: IrG6U+Rx0F5bLIQCUb9gOw=='
-            ];
-            curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
-        } else {
-            curl_setopt($curl, CURLOPT_HTTPHEADER, ['X-FMI-PE-ExtendedPrivilege: IrG6U+Rx0F5bLIQCUb9gOw==']);
-        }
-        if ($curlOptions = $this->getProperty('curlOptions')) {
-            foreach ($curlOptions as $property => $value) {
-                curl_setopt($curl, $property, $value);
-            }
-        }
-        $curlResponse = curl_exec($curl);
-        $this->setClientWPCSessionCookie($curlResponse);
-        if ($isHeadersSent) {
-            $curlResponse = $this->eliminateContainerHeader($curlResponse);
-        }
-        $this->log($curlResponse, FileMaker::LOG_DEBUG);
-        if ($curlError = curl_errno($curl)) {
-            $error = new FileMakerException(
-                $this,
-                'cURL Communication Error: (' . $curlError . ') ' . curl_error($curl)
-            );
-            if ($this->getProperty('errorHandling') === 'default') {
-                return $error;
-            }
-            throw $error;
-        }
-        curl_close($curl);
-        return $curlResponse;
+        return $this->getConnector()->getContainerData($url);
     }
 
     /**
@@ -738,123 +686,9 @@ class FileMaker
      * @return string|FileMakerException the cUrl response
      * @throws FileMakerException
      */
-    public function execute($params, $grammar = 'fmresultset')
+    public function execute($params)
     {
-        if (!function_exists('curl_init')) {
-            $error = new FileMakerException($this, 'cURL is required to use the FileMaker API.');
-            if ($this->getProperty('errorHandling') === 'default') {
-                return $error;
-            }
-            throw $error;
-        }
-
-        $restParams = [];
-        foreach ($params as $option => $value) {
-            if (($value !== true) && strtolower($this->getProperty('charset')) !== 'utf-8') {
-                $value = utf8_encode($value);
-            }
-            $restParams[] = urlencode($option) . ($value === true ? '' : '=' . urlencode($value));
-        }
-
-        $host = $this->getProperty('hostspec');
-        if (substr($host, -1, 1) !== '/') {
-            $host .= '/';
-        }
-        $host .= 'fmi/xml/' . $grammar . '.xml';
-        $this->log('Request for ' . $host, FileMaker::LOG_INFO);
-
-        $curl = curl_init($host);
-        curl_setopt($curl, CURLOPT_POST, true);
-        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($curl, CURLOPT_FAILONERROR, true);
-        $curlHeadersSent = false;
-        if (!headers_sent()) {
-            $curlHeadersSent = true;
-            curl_setopt($curl, CURLOPT_HEADER, true);
-        }
-        $this->setCurlWPCSessionCookie($curl);
-
-        if ($this->getProperty('username')) {
-            $auth = base64_encode(
-                utf8_decode($this->getProperty('username')) . ':' . utf8_decode($this->getProperty('password'))
-            );
-            $authHeader = 'Authorization: Basic ' . $auth;
-            curl_setopt(
-                $curl,
-                CURLOPT_HTTPHEADER,
-                [
-                    'Content-Type: application/x-www-form-urlencoded; charset=utf-8',
-                    'X-FMI-PE-ExtendedPrivilege: IrG6U+Rx0F5bLIQCUb9gOw==',
-                    $authHeader
-                ]
-            );
-        } else {
-            curl_setopt(
-                $curl,
-                CURLOPT_HTTPHEADER,
-                [
-                    'Content-Type: application/x-www-form-urlencoded; charset=utf-8',
-                    'X-FMI-PE-ExtendedPrivilege: IrG6U+Rx0F5bLIQCUb9gOw=='
-                ]
-            );
-        }
-
-        curl_setopt($curl, CURLOPT_POSTFIELDS, implode('&', $restParams));
-        if ($curlOptions = $this->getProperty('curlOptions')) {
-            foreach ($curlOptions as $key => $value) {
-                curl_setopt($curl, $key, $value);
-            }
-        }
-        $this->lastRequestedUrl = $host . '?' . implode('&', $restParams);
-        $this->log($this->lastRequestedUrl, FileMaker::LOG_DEBUG);
-
-        $curlResponse = curl_exec($curl);
-        $this->log($curlResponse, FileMaker::LOG_DEBUG);
-        if ($curlError = curl_errno($curl)) {
-            if ($curlError === 52) {
-                $error = new FileMakerException(
-                    $this,
-                    'cURL Communication Error: (' . $curlError . ') ' . curl_error($curl)
-                    . ' - The Web Publishing Core and/or FileMaker Server services are not running.',
-                    $curlError
-                );
-            } elseif ($curlError === 22) {
-                if (stristr("50", curl_error($curl))) {
-                    $error = new FileMakerException(
-                        $this,
-                        'cURL Communication Error: (' . $curlError . ') ' . curl_error($curl)
-                        . ' - The Web Publishing Core and/or FileMaker Server services are not running.',
-                        $curlError
-                    );
-                } else {
-                    $error = new FileMakerException(
-                        $this,
-                        'cURL Communication Error: (' . $curlError . ') ' . curl_error($curl)
-                        . ' - This can be due to an invalid username or password, or if the FMPHP privilege is not '
-                        . 'enabled for that user.',
-                        $curlError
-                    );
-                }
-            } else {
-                $error = new FileMakerException(
-                    $this,
-                    'cURL Communication Error: (' . $curlError . ') ' . curl_error($curl),
-                    $curlError
-                );
-            }
-            if ($this->getProperty('errorHandling') === 'default') {
-                return $error;
-            }
-            throw $error;
-        }
-        curl_close($curl);
-
-        $this->setClientWPCSessionCookie($curlResponse);
-        if ($curlHeadersSent) {
-            $curlResponse = $this->eliminateXMLHeader($curlResponse);
-        }
-
-        return $curlResponse;
+        return $this->getConnector()->execute($params);
     }
 
     /**
@@ -882,87 +716,6 @@ class FileMaker
             $decodedUrl = htmlspecialchars_decode($decodedUrl);
         }
         return $decodedUrl;
-    }
-
-    /**
-     * Set curl Sesion cookie
-     * @param Resource $curl a cUrl handle ressource
-     */
-    private function setCurlWPCSessionCookie($curl)
-    {
-        if (!$this->getProperty('useCookieSession')) {
-            return;
-        }
-        if (isset($_COOKIE["WPCSessionID"])) {
-            $wpcSessionId = $_COOKIE["WPCSessionID"];
-            if (!is_null($wpcSessionId)) {
-                $header = "WPCSessionID=" . $wpcSessionId;
-                curl_setopt($curl, CURLOPT_COOKIE, $header);
-            }
-        }
-    }
-
-    /**
-     * Pass WPC session cookie to client for later auth
-     * @param string $curlResponse a curl response
-     */
-    private function setClientWPCSessionCookie($curlResponse)
-    {
-        if (!$this->getProperty('useCookieSession')) {
-            return;
-        }
-        $found = preg_match('/WPCSessionID="([^;]*)";/m', $curlResponse, $matches);
-        /* Update WPCSession Cookie if needed */
-        if ($found && @$_COOKIE['WPCSessionID'] !== $matches[1]) {
-            setcookie("WPCSessionID", $matches[1]);
-            $_COOKIE['WPCSessionID'] = $matches[1];
-        }
-    }
-
-    /**
-     *
-     * @param string $curlResponse a curl response
-     * @return int content length, -1 if not provided by headers
-     */
-    private function getContentLength($curlResponse)
-    {
-        $found = preg_match('/Content-Length: (\d+)/', $curlResponse, $matches);
-        if ($found) {
-            return $matches[1];
-        } else {
-            return -1;
-        }
-    }
-
-    /**
-     *
-     * @param string $curlResponse  a curl response
-     * @return string curlResponse without xml header
-     */
-    private function eliminateXMLHeader($curlResponse)
-    {
-        $isXml = strpos($curlResponse, "<?xml");
-        if ($isXml !== false) {
-            return substr($curlResponse, $isXml);
-        } else {
-            return $curlResponse;
-        }
-    }
-
-    /**
-     *
-     * @param string $curlResponse  a curl response
-     * @return string cUrl Response without leading carriage return
-     */
-    private function eliminateContainerHeader($curlResponse)
-    {
-        $len = strlen("\r\n\r\n");
-        $pos = strpos($curlResponse, "\r\n\r\n");
-        if ($pos !== false) {
-            return substr($curlResponse, $pos + $len);
-        } else {
-            return $curlResponse;
-        }
     }
 
     /**
@@ -1011,7 +764,10 @@ class FileMaker
      */
     public function getLastRequestedUrl()
     {
-        return $this->lastRequestedUrl;
+        if (!isset($this->connector)) {
+            return null;
+        }
+        return $this->connector->lastRequestedUrl;
     }
 
     /**

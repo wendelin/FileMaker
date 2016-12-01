@@ -295,14 +295,16 @@ class Layout
                     '-db' => $this->fm->getProperty('database'),
                     '-lay' => $this->getName(),
                     '-recid' => $recid,
-                    '-view' => null
-                ], 'FMPXMLLAYOUT');
+                    '-view' => null,
+                    '-grammar' => 'FMPXMLLAYOUT'
+                ]);
             } else {
                 $result = $this->fm->execute([
                     '-db' => $this->fm->getProperty('database'),
                     '-lay' => $this->getName(),
-                    '-view' => null
-                ], 'FMPXMLLAYOUT');
+                    '-view' => null,
+                    '-grammar' => 'FMPXMLLAYOUT'
+                ]);
             }
             $parser = new FMPXMLLAYOUT($this->fm);
             $parseResult = $parser->parse($result);
