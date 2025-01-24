@@ -836,7 +836,7 @@ class FileMaker
             if (($value !== true) && strtolower($this->getProperty('charset')) !== 'utf-8') {
                 $value = utf8_encode($value);
             }
-            $restParams[] = urlencode($option) . ($value === true ? '' : '=' . urlencode($value));
+            $restParams[] = urlencode($option) . ($value === true || $value == null ? '' : '=' . urlencode($value));
             $footPrint[] = $option . "=" . (preg_match('/\.value$/', $option) ? ":$option" : $value);
         }
 
@@ -942,7 +942,7 @@ class FileMaker
 
     /**
      * Set curl Sesion cookie
-     * @param Resource $curl a cUrl handle ressource
+     * @param resource $curl a cUrl handle ressource
      */
     private function setCurlWPCSessionCookie($curl)
     {
@@ -1140,7 +1140,7 @@ class FileMaker
      * @return null|FileMakerException $previous
      * @throws FileMakerException
      */
-    public function returnOrThrowException($message = null, $code = null, $previous = null)
+    public function returnOrThrowException($message = null, $code = -1, $previous = null)
     {
         $exception = new FileMakerException($this, $message, $code, $previous);
         if ($this->getProperty('errorHandling') == 'exception') {
@@ -1184,6 +1184,6 @@ class FileMaker
 
     private function connexionId()
     {
-        return md5($this->hostspec & "#" & $this->database & "#" & $this->username);
+        return md5($this->hostspec . "#" . $this->database . "#" . $this->username);
     }
 }

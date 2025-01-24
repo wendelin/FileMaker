@@ -87,19 +87,17 @@ class Edit extends Command
         $params['-edit'] = true;
         if ($this->deleteRelated === null) {
             foreach ($this->fields as $fieldname => $values) {
+                $suffix = '';
                 if (strpos($fieldname, '.') !== false) {
                     list ($fieldname, $infos) = explode('.', $fieldname, 2);
-                    $infos = '.' . $infos;
+                    $suffix = '.' . $infos;
                 } else {
                     $field = $layout->getField($fieldname);
                     if (FileMaker::isError($field)) {
                         return $field;
                     }
-
                     if ($field->isGlobal()) {
                         $suffix = '.global';
-                    } else {
-                        $suffix = '';
                     }
                 }
                 foreach ($values as $repetition => $value) {

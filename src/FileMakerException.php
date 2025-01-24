@@ -32,10 +32,10 @@ class FileMakerException extends \Exception
      * @param integer $code Error code.
      * @param null|\Exception $previous
      */
-    public function __construct($fm, $message = null, $code = null, $previous = null)
+    public function __construct($fm, $message = null, $code = -1, $previous = null)
     {
         $this->fm = $fm;
-        if ($code !== null) {
+        if (empty($message)) {
             $message = $this->getErrorString($code);
         }
 
@@ -67,14 +67,14 @@ class FileMakerException extends \Exception
             } else {
                 $path = dirname(__FILE__) . '/Error/en.php';
             }
-            $strings[$lang] = require($path);
+            self::$strings[$lang] = require($path);
         }
 
-        if (isset($strings[$lang][$code])) {
-            return $strings[$lang][$code];
+        if (isset(self::$strings[$lang][$code])) {
+            return self::$strings[$lang][$code];
         }
 
-        return $strings[$lang][-1];
+        return self::$strings[$lang][-1];
     }
 
     /**
